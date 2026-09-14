@@ -527,8 +527,10 @@ _PREVIEW_TITLE_PATTERNS = (
     "pre-game ",
     "post-game",
     "postgame",
+    "press conference",
     "highlights:",
     "highlights ",
+    "ended",
 )
 
 
@@ -644,6 +646,7 @@ _NON_MAIN_CARD_NAME_MARKERS = (
     "pre game", "pre-game", "pregame",
     "post game", "post-game", "postgame",
     "weigh in", "weigh-in",
+    "ended",
 )
 
 
@@ -654,22 +657,31 @@ def _is_non_main_card(channel_name: str) -> bool:
 
 
 def _main_card_first(cands: List[ChannelCandidate]) -> List[ChannelCandidate]:
-    """Stable-sort Tier-1 matches so a plain feed outranks an undercard one.
+    """Stable-sort field-event matches so a main card precedes ancillary feeds.
 
-    DEMOTE, DO NOT DROP. A provider that labels every one of its feeds
-    'Prelims' would otherwise lose the event entirely, and the whole point of
-    Tier-1 stacking is that a viewer can fall through to another feed. Sorting
-    on a bool is stable, so within each group the original discovery order (and
-    therefore every existing expectation about variant ordering) is untouched;
-    the only thing that changes is that an ancillary feed can no longer sit in
-    front of a main-card one.
-
-    Applied to BOTH the field-event and two-team paths. #135 observed it on a
-    UFC card, but 'PRE SHOW: Man Utd vs Brentford' winning primary over the
-    actual match feed is the same defect, and since this only reorders there is
-    no recall cost to covering both.
+    Field events intentionally retain ancillary feeds as fallbacks. Two-team
+    games use _strip_ancillary_two_team_candidates() before any matching tier,
+    because a postgame, press conference, pregame, multiview, or ended slot is
+    not a safe automatic replacement for the live game.
     """
     return sorted(cands, key=lambda c: _is_non_main_card(c.channel_name))
+
+
+def _strip_ancillary_two_team_candidates(
+    candidates: List[ChannelCandidate],
+) -> List[ChannelCandidate]:
+    """Reject non-live channel-name candidates for automatic two-team matching.
+
+    Ranked Matchups creates immediately playable virtual channels. Retaining an
+    ancillary or ended feed when no live-game feed exists lets that feed become
+    the primary through Tier 1, Tier 2, or the wider Tier 3 fallback. Excluding
+    it at the candidate boundary makes the safety rule apply consistently to
+    deterministic, Claude-assisted, and no-key matching.
+    """
+    return [
+        candidate for candidate in candidates
+        if not _is_non_main_card(candidate.channel_name)
+    ]
 
 
 _MONTHS = {m: i for i, m in enumerate(
@@ -896,6 +908,17 @@ def match_games_to_channels(
         # alone, exactly as field_event.py's design contract assumes. Two-team
         # games keep `match_away = game.away` and the full both-teams gate.
         match_away = None if is_field_event(game.away, getattr(game, "extra", None)) else game.away
+
+        # For a two-team game, ancillary and ended channel names are not
+        # automatic broadcast candidates. Apply this before every tier so a
+        # rejected postgame/press-conference feed cannot re-enter through the
+        # wider Claude or no-key fallback. Field events retain their historical
+        # main-card-first fallback stack.
+        if match_away is not None:
+            candidates = _strip_ancillary_two_team_candidates(candidates)
+            if not candidates:
+                results[i].note = "only ancillary or ended candidates in time window"
+                continue
 
         # Tier 1 (strongest signal): channels whose NAME contains both teams
         # (or, for field events, the event name). These are dedicated match
