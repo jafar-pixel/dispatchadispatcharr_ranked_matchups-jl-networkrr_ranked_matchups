@@ -552,6 +552,16 @@ class TestPreviewTitleDetection:
         assert _is_preview_title("Postgame Wrap-up")
         assert _is_preview_title("Post-game analysis")
 
+    def test_press_conference_is_not_live_game(self):
+        assert _is_preview_title(
+            "Football: Virginia Tech at Maryland Postgame Press Conference"
+        )
+
+    def test_ended_slot_is_not_live_game(self):
+        assert _is_preview_title(
+            "ENDED | ABILENE CHRISTIAN VS. INCARNATE WORD"
+        )
+
     def test_real_broadcast_not_flagged(self):
         # A live match title should NOT be flagged as a preview.
         assert not _is_preview_title("Premier League: Manchester United vs Brentford")
@@ -1244,6 +1254,57 @@ class TestMainCardFirst:
         assert results[0].method == "regex_strict"
         assert results[0].channel_name == "LIVE EVENT 02 - 8pm UFC Freedom 250: Topuria vs. Gaethje"
         assert len(results[0].channel_ids) == 2, "the pre-show still stacks behind"
+
+
+class TestTwoTeamAncillarySafety:
+    """Ancillary and ended feeds must never become automatic game channels."""
+
+    def test_postgame_press_conference_does_not_match(self):
+        games = [(_Game("Virginia Tech", "Maryland"), None, None)]
+        cands = [_cand(
+            81,
+            "(US) (BTN+ 081) | Football: Virginia Tech at Maryland "
+            "Postgame Press Conference (2026-09-19 22:50:05)",
+            "Live",
+        )]
+        results = match_games_to_channels(
+            games, lambda game: cands, api_key="", model="m"
+        )
+        assert results[0].channel_id is None
+        assert results[0].channel_ids == []
+        assert "ancillary" in results[0].note
+
+    def test_ended_wrong_fixture_does_not_enter_wider_fallback(self):
+        games = [(_Game("Houston Christian", "Incarnate Word"), None, None)]
+        cands = [_cand(
+            63,
+            "ENDED | ABILENE CHRISTIAN VS. INCARNATE WORD | "
+            "US: ESPN+ PPV 63",
+            "Ended",
+        )]
+        results = match_games_to_channels(
+            games, lambda game: cands, api_key="", model="m"
+        )
+        assert results[0].channel_id is None
+        assert results[0].channel_ids == []
+        assert "ended" in results[0].note
+
+    def test_live_game_wins_without_ancillary_fallbacks(self):
+        games = [(_Game("Virginia Tech", "Maryland"), None, None)]
+        cands = [
+            _cand(10, "ESPN: Virginia Tech at Maryland", "Live"),
+            _cand(
+                81,
+                "BTN+: Virginia Tech at Maryland Postgame Press Conference",
+                "Live",
+            ),
+        ]
+        results = match_games_to_channels(
+            games, lambda game: cands, api_key="", model="m"
+        )
+        assert results[0].method == "regex_strict"
+        assert results[0].channel_id == 10
+        assert results[0].channel_ids == [10]
 
 
 class TestFieldEventMatching:
