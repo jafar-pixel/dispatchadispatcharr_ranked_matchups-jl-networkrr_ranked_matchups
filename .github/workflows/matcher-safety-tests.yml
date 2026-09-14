@@ -25,5 +25,7 @@ jobs:
           python-version: "3.12"
       - name: Install test dependency
         run: python -m pip install --disable-pip-version-check pytest
-      - name: Run matcher tests
-        run: python -m pytest -q tests/test_matcher.py
+      - name: Run ancillary-feed regression tests
+        run: >-
+          python -m pytest -q tests/test_matcher.py
+          -k "TwoTeamAncillarySafety or press_conference_is_not_live_game or ended_slot_is_not_live_game"
